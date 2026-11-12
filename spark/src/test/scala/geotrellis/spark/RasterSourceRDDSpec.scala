@@ -38,6 +38,10 @@ import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funspec.AnyFunSpec
 import geotrellis.util.identityComponent
 
+import java.io.FileInputStream
+import java.nio.file.{Files, StandardCopyOption}
+import java.util.zip.GZIPInputStream
+
 class RasterSourceRDDSpec extends AnyFunSpec with TestEnvironment with RasterMatchers with BeforeAndAfterAll {
 
   val uri = Resource.path("vlm/aspect-tiled.tif")
@@ -50,6 +54,30 @@ class RasterSourceRDDSpec extends AnyFunSpec with TestEnvironment with RasterMat
   lazy val reprojectedSource = rasterSource.reprojectToGrid(targetCRS, layout)
 
   describe("reading in GeoTiffs as RDDs") {
+    it("should tile a UInt16 GeoTiff with overviews into a floating layout") {
+      val path = Files.createTempFile("issue-3509", ".tif")
+      try {
+        val input = new GZIPInputStream(new FileInputStream("raster/data/issue-3509.tif.gz"))
+        try Files.copy(input, path, StandardCopyOption.REPLACE_EXISTING)
+        finally input.close()
+
+        val sourceRDD: RDD[RasterSource] =
+          sc.parallelize(Seq(path.toString)).map(uri => GeoTiffRasterSource(uri): RasterSource)
+
+        val summary = RasterSummary.fromRDD(sourceRDD)
+        val LayoutLevel(_, targetLayout) = summary.levelFor(FloatingLayoutScheme(256))
+        val tiledRDD =
+          RasterSourceRDD.tiledLayerRDD(
+            sourceRDD,
+            targetLayout,
+            KeyExtractor.spatialKeyExtractor,
+            rasterSummary = Some(summary)
+          )
+
+        tiledRDD.count() should be > 0L
+      } finally Files.deleteIfExists(path)
+    }
+
     it("should have the right number of tiles") {
       val expectedKeys =
         layout

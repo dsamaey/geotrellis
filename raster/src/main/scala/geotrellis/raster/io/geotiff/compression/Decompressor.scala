@@ -106,7 +106,7 @@ object Decompressor {
       }
     }
 
-    tiffTags.compression match {
+    val decompressor = tiffTags.compression match {
       case Uncompressed =>
         checkEndian(NoCompressor)
       case LZWCoded =>
@@ -136,6 +136,17 @@ object Decompressor {
       case compression =>
         val msg = s"compression type $compression is not supported by this reader."
         throw new GeoTiffReaderLimitationException(msg)
+    }
+
+    new Decompressor {
+      def code: Int = decompressor.code
+      override def predictorCode: Int = decompressor.predictorCode
+      override def byteOrder: ByteOrder = decompressor.byteOrder
+
+      def decompress(bytes: Array[Byte], segmentIndex: Int): Array[Byte] =
+        // A zero-byte TIFF segment is a sparse tile whose samples are implicitly zero.
+        if (bytes.isEmpty) Array.ofDim[Byte](segmentSizes(segmentIndex))
+        else decompressor.decompress(bytes, segmentIndex)
     }
   }
 }
